@@ -1,0 +1,39 @@
+data:
+  nuscenes_root: "/kaggle/input/datasets/aadimator/nuscenes-mini"
+  version: "v1.0-mini"
+  cameras: ["CAM_FRONT", "CAM_FRONT_LEFT", "CAM_FRONT_RIGHT", "CAM_BACK", "CAM_BACK_LEFT", "CAM_BACK_RIGHT"]
+  image_size: [448, 800]
+
+augmentation:
+  random_flip: true
+  color_jitter: true
+  random_erasing: true
+
+bev:
+  x_range: [-25.0, 25.0]
+  y_range: [0.0, 50.0]       
+  resolution: 0.25          
+
+depth:
+  min: 4.0
+  max: 50.0
+  bins: 112
+
+model:
+  backbone: "resnet50"
+  pretrained: true
+  bev_channels: 64
+  dropout: 0.3
+
+train:
+  batch_size: 4
+  num_workers: 2
+  epochs: 50
+  lr: 2.0e-4
+  weight_decay: 1.0e-4
+  pos_weight: 5.0
+  early_stopping_patience: 10
+
+paths:
+  checkpoints: "/kaggle/working/checkpoints"
+  logs: "/kaggle/working/logs"

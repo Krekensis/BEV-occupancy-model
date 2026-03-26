@@ -1,0 +1,12 @@
+torch
+torchvision
+nuscenes-devkit
+numpy
+opencv-python
+matplotlib
+pyyaml
+tqdm
+tensorboard
+Pillow
+scikit-learn
+pyquaternion
