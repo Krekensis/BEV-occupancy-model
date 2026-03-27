@@ -112,7 +112,7 @@ def val_epoch(model, loader, loss_fn, device, epoch, writer, cfg):
     total_dwe  = 0.0
 
     bev    = cfg["bev"]
-    H_bev  = int((bev["y_range"][1] - bev["y_range"][0]) / bev["resolution"])
+    H_bev  = int((bev["forward_range"][1] - bev["forward_range"][0]) / bev["resolution"])
 
     pbar = tqdm(loader, desc=f"Val   E{epoch}", leave=False)
     for step, batch in enumerate(pbar):
@@ -126,7 +126,7 @@ def val_epoch(model, loader, loss_fn, device, epoch, writer, cfg):
 
         iou = occupancy_iou(logits, gt)
         dwe = distance_weighted_error(logits, gt, H_bev,
-                                      bev["y_range"][0], bev["y_range"][1])
+                                      bev["forward_range"][0], bev["forward_range"][1])
         total_loss += loss.item()
         total_iou  += iou
         total_dwe  += dwe

@@ -44,23 +44,23 @@ def distance_weighted_error(
     logits:  torch.Tensor,   # (B, 1, H, W) or (B, H, W)
     gt:      torch.Tensor,   # (B, H, W)  binary float
     H_bev:   int,
-    x_min:   float,          # forward range min (metres)
-    x_max:   float,          # forward range max (metres)
+    fwd_min:   float = -25,          # forward range min (metres)
+    fwd_max:   float = 25,          # forward range max (metres)
     threshold: float = 0.5,
 ) -> float:
     """
     Computes a distance-weighted binary error.
     Errors at cells closer to the ego vehicle get higher weight.
 
-    Weight per row = (x_max - x) / (x_max - x_min)
-    where x_max = farthest row (weight→0), x = ego row (weight→1).
+    Weight per row = (fwd_max - x) / (fwd_max - fwd_min)
+    where fwd_max = farthest row (weight→0), x = ego row (weight→1).
 
     Args:
         logits:  raw model output
         gt:      binary ground truth
         H_bev:   number of BEV rows
-        x_min:   minimum forward distance in metres
-        x_max:   maximum forward distance in metres
+        fwd_min:   minimum forward distance in metres
+        fwd_max:   maximum forward distance in metres
 
     Returns:
         weighted_error: scalar float
@@ -77,7 +77,7 @@ def distance_weighted_error(
                                   device=logits.device)  # (H,) near=1, far=0
     # Actually row 0 is far, row H-1 is near, so:
     row_weights = row_weights.flip(0)                    # row 0=1.0 (near), H-1=0.0
-    # Wait: our grid: row 0 = far (x_max), row H-1 = near (x_min)
+    # Wait: our grid: row 0 = far (fwd_max), row H-1 = near (fwd_min)
     # We want near to be high weight → row H-1 gets weight 1.0
     row_weights = torch.linspace(0.0, 1.0, H_bev,
                                   device=logits.device)  # (H,) 0=far, 1=near
@@ -91,12 +91,13 @@ def distance_weighted_error(
 
 # ── Quick test ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    fwd_min, fwd_max = -25, 25
     B, H, W = 4, 100, 100
     logits = torch.randn(B, 1, H, W)
     gt     = (torch.rand(B, H, W) > 0.9).float()   # sparse GT
 
     iou    = occupancy_iou(logits, gt)
-    dwe    = distance_weighted_error(logits, gt, H, 0.0, 50.0)
+    dwe    = distance_weighted_error(logits, gt, H, fwd_min, fwd_max)
 
     print(f"Occupancy IoU            : {iou:.4f}")
     print(f"Distance-weighted Error  : {dwe:.4f}")

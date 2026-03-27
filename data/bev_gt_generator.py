@@ -9,9 +9,26 @@ For each sample:
   3. Keep points within the configured BEV range
   4. Mark grid cells as occupied (1) if any point falls in them
 
-Output: binary numpy array of shape (H_bev, W_bev) where
-        H_bev = (y_range[1] - y_range[0]) / resolution
-        W_bev = (x_range[1] - x_range[0]) / resolution
+nuScenes ego frame convention:
+    points_ego[:, 0] = forward  (X in nuScenes) → rows in BEV
+    points_ego[:, 1] = lateral  (Y in nuScenes, positive = LEFT) → cols in BEV
+    points_ego[:, 2] = up       (Z in nuScenes) → ignored
+
+Config convention (to avoid confusion with nuScenes axes):
+    lateral_range : [min, max]  left/right  e.g. [-25, 25]
+    forward_range : [min, max]  front/back  e.g. [-25, 25]
+
+Grid convention:
+    row 0       = far front  (+forward_max)
+    row H-1     = far back   (+forward_min)
+    row H//2    = ego        (forward=0)
+    col 0       = far LEFT   (+lateral_max)  ← nuScenes Y+ = left, so col 0 = left
+    col W-1     = far RIGHT  (+lateral_min)
+    col W//2    = ego        (lateral=0)
+
+Output: binary numpy array of shape (H, W) where
+        H = (forward_range[1] - forward_range[0]) / resolution
+        W = (lateral_range[1] - lateral_range[0]) / resolution
 """
 
 import numpy as np
@@ -22,103 +39,89 @@ from pyquaternion import Quaternion
 
 def get_bev_grid_shape(cfg: dict) -> tuple:
     """Return (H, W) of the BEV grid from config."""
-    bev = cfg["bev"]
-    H = int((bev["y_range"][1] - bev["y_range"][0]) / bev["resolution"])
-    W = int((bev["x_range"][1] - bev["x_range"][0]) / bev["resolution"])
+    bev     = cfg["bev"]
+    lat_min, lat_max = bev["lateral_range"]
+    fwd_min, fwd_max = bev["forward_range"]
+    res              = bev["resolution"]
+    H = int((fwd_max - fwd_min) / res)   # forward → rows
+    W = int((lat_max - lat_min) / res)   # lateral → cols
     return H, W
 
 
 def lidar_to_ego(nusc: NuScenes, sample_token: str) -> np.ndarray:
     """
-    Load LiDAR points and transform them from LiDAR sensor frame
-    to ego-vehicle frame.
+    Load LiDAR points and transform from LiDAR sensor frame to ego frame.
 
     Returns:
-        points: (N, 3) array of XYZ in ego frame
+        points_ego: (N, 3)  columns = [forward, lateral, up]
     """
-    sample = nusc.get("sample", sample_token)
+    sample     = nusc.get("sample", sample_token)
     lidar_token = sample["data"]["LIDAR_TOP"]
-    lidar_data = nusc.get("sample_data", lidar_token)
+    lidar_data  = nusc.get("sample_data", lidar_token)
 
-    # Load raw point cloud (x, y, z, intensity, ring)
     pc = LidarPointCloud.from_file(
         nusc.dataroot + "/" + lidar_data["filename"]
     )
 
-    # ── Transform: LiDAR sensor frame → ego frame ────────────────────────
-    calib = nusc.get("calibrated_sensor", lidar_data["calibrated_sensor_token"])
+    calib       = nusc.get("calibrated_sensor", lidar_data["calibrated_sensor_token"])
+    rotation    = Quaternion(calib["rotation"]).rotation_matrix   # (3, 3)
+    translation = np.array(calib["translation"])                  # (3,)
 
-    rotation    = Quaternion(calib["rotation"]).rotation_matrix      # (3, 3)
-    translation = np.array(calib["translation"])                     # (3,)
+    points_xyz  = pc.points[:3, :].T                              # (N, 3)
+    points_ego  = (rotation @ points_xyz.T).T + translation       # (N, 3)
 
-    points_xyz = pc.points[:3, :].T                                  # (N, 3)
-    points_ego = (rotation @ points_xyz.T).T + translation           # (N, 3)
-
-    return points_ego                                                 # (N, 3)
+    return points_ego   # [:, 0]=forward  [:, 1]=lateral(+left)  [:, 2]=up
 
 
 def points_to_bev_grid(points_ego: np.ndarray, cfg: dict) -> np.ndarray:
     """
-    Project ego-frame XYZ points onto a 2D BEV occupancy grid.
-
-    nuScenes ego frame convention:
-        X → forward (front of car)
-        Y → left
-        Z → up
-
-    BEV grid convention (matches typical image layout):
-        row  0   = far  (max X / y_range[1])
-        row  H-1 = near (min X / y_range[0])
-        col  0   = left (min Y / x_range[0])  — note Y is lateral axis
-        col  W-1 = right
+    Project ego-frame points onto a 2D BEV occupancy grid.
 
     Args:
-        points_ego: (N, 3) XYZ in ego frame
-        cfg: config dict
+        points_ego: (N, 3) — forward, lateral, up in ego frame
+        cfg:        config dict with bev.lateral_range, bev.forward_range, bev.resolution
 
     Returns:
-        grid: (H, W) binary uint8 array
+        grid: (H, W) binary uint8 — 1=occupied, 0=empty
     """
-    bev     = cfg["bev"]
-    x_min, x_max = bev["y_range"]   # forward range  (ego X axis)
-    y_min, y_max = bev["x_range"]   # lateral range  (ego Y axis)
-    res          = bev["resolution"]
+    bev = cfg["bev"]
 
-    H = int((x_max - x_min) / res)
-    W = int((y_max - y_min) / res)
+    lat_min, lat_max = bev["lateral_range"]   # left/right  e.g. [-25, 25]
+    fwd_min, fwd_max = bev["forward_range"]   # front/back  e.g. [-25, 25]
+    res              = bev["resolution"]
 
-    x = points_ego[:, 0]   # forward
-    y = points_ego[:, 1]   # lateral
+    H = int((fwd_max - fwd_min) / res)   # forward → rows
+    W = int((lat_max - lat_min) / res)   # lateral → cols
 
-    # Filter to BEV region
-    mask = (x >= x_min) & (x < x_max) & (y >= y_min) & (y < y_max)
-    x, y = x[mask], y[mask]
+    forward = points_ego[:, 0]   # nuScenes X — front of car is positive
+    lateral = points_ego[:, 1]   # nuScenes Y — LEFT is positive
 
-    # Convert to grid indices
-    row = H - 1 - ((x - x_min) / res).astype(int)   # flip so near = bottom
-    col = ((y - y_min) / res).astype(int)
+    # Keep only points inside the BEV region
+    mask = (
+        (forward >= fwd_min) & (forward <  fwd_max) &
+        (lateral >= lat_min) & (lateral <  lat_max)
+    )
+    forward = forward[mask]
+    lateral = lateral[mask]
 
-    # Clip just in case of floating point edge cases
+    # row: row 0 = far front (fwd_max), row H-1 = far back (fwd_min)
+    row = ((fwd_max - forward) / res).astype(int)
+
+    # col: nuScenes lateral+ = LEFT, so col 0 = left (lat_max side)
+    #      col W-1 = right (lat_min side)
+    col = ((lat_max - lateral) / res).astype(int)
+
     row = np.clip(row, 0, H - 1)
     col = np.clip(col, 0, W - 1)
 
     grid = np.zeros((H, W), dtype=np.uint8)
     grid[row, col] = 1
-
     return grid
 
 
 def generate_bev_gt(nusc: NuScenes, sample_token: str, cfg: dict) -> np.ndarray:
     """
     Full pipeline: sample_token → binary BEV occupancy grid.
-
-    Args:
-        nusc:         NuScenes instance
-        sample_token: token string for the sample
-        cfg:          config dict (from default.yaml)
-
-    Returns:
-        grid: (H, W) binary uint8 array
     """
     points_ego = lidar_to_ego(nusc, sample_token)
     grid       = points_to_bev_grid(points_ego, cfg)
@@ -139,19 +142,37 @@ if __name__ == "__main__":
         verbose=True
     )
 
-    # Test on first sample
     sample_token = nusc.sample[0]["token"]
     grid = generate_bev_gt(nusc, sample_token, cfg)
+    H, W = grid.shape
 
-    print(f"Grid shape     : {grid.shape}")
+    bev          = cfg["bev"]
+    lat_min, lat_max = bev["lateral_range"]
+    fwd_min, fwd_max = bev["forward_range"]
+
+    print(f"Grid shape     : {grid.shape}  (H={H} rows=forward, W={W} cols=lateral)")
     print(f"Occupied cells : {grid.sum()} / {grid.size}")
     print(f"Occupancy ratio: {grid.mean():.4f}")
 
-    plt.figure(figsize=(6, 6))
-    plt.imshow(grid, cmap="gray", origin="upper")
-    plt.title("BEV Occupancy GT (white = occupied)")
-    plt.xlabel("Lateral (Y)")
-    plt.ylabel("Forward (X) — ego at bottom")
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.imshow(grid, cmap="gray", origin="upper")
+
+    # Real-world tick labels
+    ax.set_xticks(np.linspace(0, W, 5))
+    ax.set_xticklabels([f"{v:.0f}" for v in np.linspace(lat_max, lat_min, 5)])
+    ax.set_yticks(np.linspace(0, H, 5))
+    ax.set_yticklabels([f"{v:.0f}" for v in np.linspace(fwd_max, fwd_min, 5)])
+
+    ax.set_xlabel("Lateral — left (+) | right (-) [m]")
+    ax.set_ylabel("Forward (+) | Back (-) [m]")
+    ax.set_title("BEV Occupancy GT")
+
+    # Ego at center
+    ax.plot(W // 2, H // 2, "r+", markersize=15, markeredgewidth=2, label="ego")
+    ax.axhline(H // 2, color="red", linewidth=0.5, alpha=0.3)
+    ax.axvline(W // 2, color="red", linewidth=0.5, alpha=0.3)
+    ax.legend(loc="upper right")
+
     plt.tight_layout()
     plt.savefig("bev_gt_test.png", dpi=150)
     print("Saved bev_gt_test.png")

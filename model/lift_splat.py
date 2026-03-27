@@ -42,12 +42,12 @@ class LiftSplat(nn.Module):
         bev   = cfg["bev"]
         depth = cfg["depth"]
 
-        self.x_min, self.x_max = bev["y_range"]   # forward  (ego X)
-        self.y_min, self.y_max = bev["x_range"]   # lateral  (ego Y)
-        self.res                = bev["resolution"]
+        self.lat_min, self.lat_max = bev["lateral_range"]   # forward  (ego X)
+        self.fwd_min, self.fwd_max = bev["forward_range"]   # lateral  (ego Y)
+        self.res = bev["resolution"]
 
-        self.H_bev = int((self.x_max - self.x_min) / self.res)
-        self.W_bev = int((self.y_max - self.y_min) / self.res)
+        self.H_bev = int((self.lat_max - self.lat_min) / self.res)
+        self.W_bev = int((self.fwd_max - self.fwd_min) / self.res)
 
         self.ctx_channels = ctx_channels
 
@@ -162,8 +162,8 @@ class LiftSplat(nn.Module):
         py = points_ego[..., 1]   # (B, D, fH, fW)
 
         # Convert to BEV grid indices
-        row = ((px - self.x_min) / self.res)   # (B, D, fH, fW)  forward → row
-        col = ((py - self.y_min) / self.res)   # (B, D, fH, fW)  lateral → col
+        row = ((px - self.lat_min) / self.res)   # (B, D, fH, fW)  forward → row
+        col = ((py - self.fwd_min) / self.res)   # (B, D, fH, fW)  lateral → col
 
         # Flip row so near = bottom (row 0 = far)
         row = (self.H_bev - 1) - row

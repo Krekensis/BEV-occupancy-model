@@ -10,9 +10,9 @@ augmentation:
   random_erasing: true
 
 bev:
-  x_range: [-25.0, 25.0]
-  y_range: [0.0, 50.0]       
-  resolution: 0.25          
+  lateral_range: [-25.0, 25.0]   # left/right
+  forward_range: [-25.0, 25.0]   # front/back     
+  resolution: 0.25
 
 depth:
   min: 4.0
@@ -32,7 +32,7 @@ train:
   lr: 2.0e-4
   weight_decay: 1.0e-4
   pos_weight: 5.0
-  early_stopping_patience: 10
+  early_stopping_patience: 15
 
 paths:
   checkpoints: "/kaggle/working/checkpoints"

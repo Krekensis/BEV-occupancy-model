@@ -84,11 +84,14 @@ class NuScenesDataset(Dataset):
         print(f"[NuScenesDataset] {split}: {len(self.items)} items "
               f"({n_samples} samples x {len(self.cameras)} cameras)")
 
-    def _apply_flip(self, image, bev_gt):
+    def _apply_flip(self, image, bev_gt, K):
         if random.random() > 0.5:
-            image  = TF.hflip(image)
-            bev_gt = torch.flip(bev_gt, dims=[1])
-        return image, bev_gt
+            image   = TF.hflip(image)
+            bev_gt  = torch.flip(bev_gt, dims=[1])  
+            K       = K.clone()
+            img_w   = self.cfg["data"]["image_size"][1]
+            K[0, 2] = img_w - K[0, 2]
+        return image, bev_gt, K
 
     def _get_intrinsics(self, sample, camera):
         sd_token = sample["data"][camera]
@@ -127,7 +130,7 @@ class NuScenesDataset(Dataset):
         bev_gt = torch.from_numpy(bev_gt).float()
 
         if self.split == "train":
-            image, bev_gt = self._apply_flip(image, bev_gt)
+            image, bev_gt, K = self._apply_flip(image, bev_gt, K)
 
         return {
             "image":  image,
