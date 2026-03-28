@@ -4,23 +4,25 @@ bev_occupancy_net.py
 Assembles the full pipeline:
 
     RGB image (B, 3, H, W)
-        ↓  ResNetBackbone
-    features (B, 2048, fH, fW)
-        ↓  DepthNet
-    depth_dist (B, D, fH, fW)  +  context (B, C, fH, fW)
+        ↓  DepthAnythingEncoder  (Depth Anything V2 backbone)
+    depth_dist (B, D, fH, fW)  +  context (B, C_ctx, fH, fW)
         ↓  LiftSplat  [uses K, E from nuScenes calibration]
-    bev_feat (B, C, H_bev, W_bev)
+    bev_feat (B, C_ctx, H_bev, W_bev)
         ↓  BEVDecoder
     logits (B, 1, H_bev, W_bev)
+
+Key change vs. original:
+    ResNetBackbone + DepthNet  →  DepthAnythingEncoder
+    The DA2 encoder jointly predicts metric depth (converted to a soft
+    bin distribution) and rich context features from ViT patch embeddings.
 """
 
 import torch
 import torch.nn as nn
 
-from model.backbone    import ResNetBackbone
-from model.depth_net   import DepthNet
-from model.lift_splat  import LiftSplat
-from model.bev_decoder import BEVDecoder
+from model.depth_anything import DepthAnythingEncoder
+from model.lift_splat     import LiftSplat
+from model.bev_decoder    import BEVDecoder
 
 
 class BEVOccupancyNet(nn.Module):
@@ -28,24 +30,18 @@ class BEVOccupancyNet(nn.Module):
     def __init__(self, cfg: dict):
         super().__init__()
 
-        ctx_ch     = cfg["model"]["bev_channels"]   # 64
-        depth_bins = cfg["depth"]["bins"]            # 112
-        img_h, img_w = cfg["data"]["image_size"]    # [448, 800]
+        ctx_ch   = cfg["model"]["bev_channels"]    # 64
+        img_h, img_w = cfg["data"]["image_size"]   # [448, 800]
 
         self.img_h = img_h
         self.img_w = img_w
 
         # ── Sub-modules ───────────────────────────────────────────────────────
-        self.backbone = ResNetBackbone(pretrained=cfg["model"]["pretrained"])
-        self.depth_net = DepthNet(
-            in_channels=self.backbone.out_channels,   # 2048
-            depth_bins=depth_bins,
-            ctx_channels=ctx_ch,
-        )
-        self.lift_splat = LiftSplat(cfg, ctx_channels=ctx_ch)
+        self.encoder     = DepthAnythingEncoder(cfg, ctx_channels=ctx_ch)
+        self.lift_splat  = LiftSplat(cfg, ctx_channels=ctx_ch)
         self.bev_decoder = BEVDecoder(
             in_channels=ctx_ch,
-            dropout=cfg["model"].get("dropout", 0.3)
+            dropout=cfg["model"].get("dropout", 0.3),
         )
 
     # ── Intrinsic scaling helper ──────────────────────────────────────────────
@@ -57,7 +53,7 @@ class BEVOccupancyNet(nn.Module):
     ) -> torch.Tensor:
         """
         Scale K from original image resolution to feature map resolution.
-        ResNet-50 uses stride 32, so fH = img_H/32, fW = img_W/32.
+        DA2 ViT patch size = 14, so fH = img_H // 14, fW = img_W // 14.
         """
         K_feat = K.clone()
         K_feat[:, 0, :] *= (fW / self.img_w)   # scale x (columns)
@@ -76,21 +72,18 @@ class BEVOccupancyNet(nn.Module):
         Returns:
             logits: (B, 1, H_bev, W_bev)  raw occupancy logits
         """
-        # 1. Extract image features
-        features = self.backbone(image)                        # (B, 2048, fH, fW)
-        fH, fW   = features.shape[2], features.shape[3]
+        # 1. Depth distribution + context features (DA2 encoder)
+        depth_dist, context = self.encoder(image)        # (B,D,fH,fW), (B,C,fH,fW)
+        fH, fW = context.shape[2], context.shape[3]
 
-        # 2. Predict depth distribution + context
-        depth_dist, context = self.depth_net(features)        # (B, D, fH, fW), (B, C, fH, fW)
+        # 2. Scale intrinsics to match the ViT patch-feature resolution
+        K_feat = self._scale_intrinsics(K, fH, fW)       # (B, 3, 3)
 
-        # 3. Scale intrinsics to feature map resolution
-        K_feat = self._scale_intrinsics(K, fH, fW)            # (B, 3, 3)
+        # 3. Lift-Splat: image frustum → BEV feature map
+        bev_feat = self.lift_splat(depth_dist, context, K_feat, E)
 
-        # 4. Lift-Splat: image frustum → BEV feature map
-        bev_feat = self.lift_splat(depth_dist, context, K_feat, E)  # (B, C, H_bev, W_bev)
-
-        # 5. Decode BEV features → occupancy logits
-        logits = self.bev_decoder(bev_feat)                    # (B, 1, H_bev, W_bev)
+        # 4. Decode BEV features → occupancy logits
+        logits = self.bev_decoder(bev_feat)              # (B, 1, H_bev, W_bev)
 
         return logits
 
@@ -113,6 +106,6 @@ if __name__ == "__main__":
     E     = torch.eye(4).unsqueeze(0).expand(B, -1, -1).clone().to(device)
 
     logits = model(image, K, E)
-    print(f"Input image : {image.shape}")
-    print(f"Output logits: {logits.shape}")   # (2, 1, 100, 100)
-    print(f"Device: {logits.device}")
+    print(f"Input image  : {image.shape}")
+    print(f"Output logits: {logits.shape}")
+    print(f"Device       : {logits.device}")

@@ -2,7 +2,7 @@ data:
   nuscenes_root: "/kaggle/input/datasets/aadimator/nuscenes-mini"
   version: "v1.0-mini"
   cameras: ["CAM_FRONT", "CAM_FRONT_LEFT", "CAM_FRONT_RIGHT", "CAM_BACK", "CAM_BACK_LEFT", "CAM_BACK_RIGHT"]
-  image_size: [448, 800]
+  image_size: [448, 798] # using 798 cuz DA2 stupid
 
 augmentation:
   random_flip: true
@@ -10,9 +10,11 @@ augmentation:
   random_erasing: true
 
 bev:
-  lateral_range: [-25.0, 25.0]   # left/right
-  forward_range: [-25.0, 25.0]   # front/back     
+  lateral_range: [-25.0, 25.0]   # left/right  → W cols
+  forward_range: [-25.0, 25.0]   # front/back  → H rows
   resolution: 0.25
+  z_min: -1.5
+  z_max:  3.0
 
 depth:
   min: 4.0
@@ -20,10 +22,13 @@ depth:
   bins: 112
 
 model:
-  backbone: "resnet50"
-  pretrained: true
+  pretrained: true          # deprecated needed this for resnet but not using this anymore
   bev_channels: 64
   dropout: 0.3
+  # ── Depth Anything V2 settings ────────────────────────────────────────────
+  da2_encoder: "vits"
+  da2_weights: "/kaggle/working/Depth-Anything-V2/depth_anything_v2_vits.pth"
+  freeze_da2: true          
 
 train:
   batch_size: 4

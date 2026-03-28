@@ -67,7 +67,7 @@ def main():
                  fontsize=11)
 
     axes[0].imshow(img_np)
-    axes[0].set_title("Front Camera (CAM_FRONT)")
+    axes[0].set_title(f"Camera: {item['camera']}") 
     axes[0].axis("off")
 
     axes[1].imshow(gt.numpy(), cmap="gray", vmin=0, vmax=1)
