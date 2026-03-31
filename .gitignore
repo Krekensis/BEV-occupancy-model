@@ -1,6 +1,5 @@
 nuscenes
 .env
-*.pth
 __pycache__/
 dataset-metadata.json
 .kaggle_ignore
