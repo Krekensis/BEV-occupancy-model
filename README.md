@@ -74,13 +74,13 @@ This project implements a **Bird's-Eye-View (BEV) Occupancy Prediction Network**
                        │
          ┌─────────────┴─────────────┐
          │                           │
-    ┌────▼─────┐           ┌────────▼──────┐
-    │ Depth    │           │ Context       │
-    │ Distrib. │           │ Features      │
-    │(B,D,fH,fW)          │(B,C_ctx,fH,fW)│
-    └────┬─────┘           └────────┬──────┘
-         │                          │
-        ┌└──────────────┬───────────┘
+    ┌────▼───────┐            ┌──────▼────────┐
+    │ Depth      │            │ Context       │
+    │ Distrib.   │            │ Features      │
+    │(B,D,fH,fW) │            │(B,C_ctx,fH,fW)│
+    └────┬───────┘            └──────┬────────┘
+         │                           │
+        ┌└──────────────┬────────────┘
         │               │
         │  INPUT: Camera Calibration
         │  - K (intrinsics)
@@ -104,9 +104,9 @@ This project implements a **Bird's-Eye-View (BEV) Occupancy Prediction Network**
         ┌──────────────────▼──────────────────┐
         │ OUTPUT: Occupancy Logits            │
         │ (B, 1, H_bev, W_bev)                │
-        │ [Raw logits → apply sigmoid for    │
+        │ [Raw logits → apply sigmoid for     │
         │  probability in [0, 1]]             │
-        └──────────────────────────────────────┘
+        └─────────────────────────────────────┘
 ```
 
 ### BEV Grid Convention
